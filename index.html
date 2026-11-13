@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>クロノタイプ別タスクスケジュール最適化</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gradient-to-br from-indigo-50 to-purple-50 min-h-screen">
+<div class="max-w-2xl mx-auto px-4 py-8">
+  <h1 class="text-2xl font-bold text-gray-800 mb-1">クロノタイプ別タスクスケジュール最適化</h1>
+  <p class="text-gray-500 text-sm mb-6">MEQ質問票でクロノタイプを判定し、最適なタスク配置を提案します</p>
+
+  <div id="quizSection">
+    <div class="bg-white rounded-xl shadow p-6 mb-4">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="font-semibold text-gray-700">朝型夕型質問票（MEQ簡易版）</h2>
+        <span id="questionProgress" class="text-sm text-gray-400">1 / 5</span>
+      </div>
+      <div id="questionArea"></div>
+      <div class="flex gap-3 mt-5">
+        <button id="prevBtn" aria-label="前の質問へ" class="px-4 py-2 rounded-lg bg-gray-100 text-gray-600 text-sm hover:bg-gray-200 transition hidden">← 戻る</button>
+        <button id="nextBtn" aria-label="次の質問へ" class="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700 transition ml-auto">次へ →</button>
+      </div>
+    </div>
+    <div class="flex gap-2 justify-center">
+      <div id="dot0" class="w-2 h-2 rounded-full bg-indigo-500"></div>
+      <div id="dot1" class="w-2 h-2 rounded-full bg-gray-300"></div>
+      <div id="dot2" class="w-2 h-2 rounded-full bg-gray-300"></div>
+      <div id="dot3" class="w-2 h-2 rounded-full bg-gray-300"></div>
+      <div id="dot4" class="w-2 h-2 rounded-full bg-gray-300"></div>
+    </div>
+  </div>
+
+  <div id="resultSection" class="hidden"></div>
+</div>
+
+<script>
+function escapeHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+
+const KEY = 'app_chronotype-task-schedule-optimizer';
+
+const questions = [
+  {
+    text: 'もし自由に1日のスケジュールを組めるとしたら、何時に起床しますか？',
+    options: ['5:00〜6:30（早朝）', '6:30〜7:45（朝）', '7:45〜9:45（普通）', '9:45〜11:00（遅め）', '11:00以降（夜型）'],
+    scores: [5, 4, 3, 2, 1]
+  },
+  {
+    text: '朝6:00〜8:00の時間帯に1時間の試験を受けるとしたら、どの程度のパフォーマンスが発揮できますか？',
+    options: ['かなり良い', '良い', '普通', '悪い', 'かなり悪い'],
+    scores: [5, 4, 3, 2, 1]
+  },
+  {
+    text: '夜10:00〜午前0:00まで何らかの活動をしなければならないとき、どれくらい疲れを感じますか？',
+    options: ['まったく疲れない', 'あまり疲れない', 'やや疲れる', '疲れる', 'かなり疲れる'],
+    scores: [1, 2, 3, 4, 5]
+  },
+  {
+    text: '「朝型か夜型か」と聞かれたら、どちらに近いですか？',
+    options: ['完全な朝型', 'やや朝型', '中間型', 'やや夜型', '完全な夜型'],
+    scores: [5, 4, 3, 2, 1]
+  },
+  {
+    text: 'ベッドに入ってから眠れると感じるのは通常何時ごろですか？',
+    options: ['20:00〜21:00', '21:00〜22:15', '22:15〜0:30', '0:30〜1:45', '1:45以降'],
+    scores: [5, 4, 3, 2, 1]
+  }
+];
+
+const TYPES = {
+  morning:   { label: '朝型', emoji: '🌅', color: 'bg-orange-100 border-orange-400', textColor: 'text-orange-700', range: '19〜25点' },
+  neutral:   { label: '中間型', emoji: '☀️', color: 'bg-blue-100 border-blue-400', textColor: 'text-blue-700', range: '12〜18点' },
+  evening:   { label: '夜型', emoji: '🌙', color: 'bg-purple-100 border-purple-400', textColor: 'text-purple-700', range: '5〜11点' }
+};
+
+const SCHEDULES = {
+  morning: {
+    peaks: { focus: '6:00〜10:00', creative: '10:00〜12:00', analysis: '8:00〜11:00' },
+    template: [
+      { time: '5:30〜6:00', task: '起床・軽い運動・朝食', type: '準備' },
+      { time: '6:00〜8:00', task: '最重要タスク（深い集中が必要な作業）', type: '集中' },
+      { time: '8:00〜10:00', task: '分析・レポート・複雑な意思決定', type: '分析' },
+      { time: '10:00〜12:00', task: '創造的な作業・ブレインストーミング', type: '創造' },
+      { time: '12:00〜13:00', task: '昼食・休憩', type: '休憩' },
+      { time: '13:00〜15:00', task: 'ルーティン作業・メール返信・会議', type: 'ルーティン' },
+      { time: '15:00〜17:00', task: '軽いタスク・インプット・読書', type: 'インプット' },
+      { time: '17:00以降', task: 'ゆっくり過ごす・早めに就寝準備', type: '休息' }
+    ]
+  },
+  neutral: {
+    peaks: { focus: '9:00〜12:00', creative: '11:00〜14:00', analysis: '10:00〜13:00' },
+    template: [
+      { time: '7:00〜8:00', task: '起床・朝食・準備', type: '準備' },
+      { time: '8:00〜9:00', task: 'ウォームアップ・メール確認・軽い作業', type: 'ウォームアップ' },
+      { time: '9:00〜12:00', task: '最重要タスク・深い集中作業', type: '集中' },
+      { time: '12:00〜13:00', task: '昼食・休憩', type: '休憩' },
+      { time: '13:00〜15:00', task: '分析・戦略的思考・創造的作業', type: '創造' },
+      { time: '15:00〜17:00', task: '会議・コラボレーション・レビュー', type: '協働' },
+      { time: '17:00〜19:00', task: 'ルーティン作業・整理・翌日準備', type: 'ルーティン' },
+      { time: '22:00〜23:00', task: '就寝', type: '休息' }
+    ]
+  },
+  evening: {
+    peaks: { focus: '20:00〜24:00', creative: '22:00〜1:00', analysis: '19:00〜23:00' },
+    template: [
+      { time: '8:00〜9:00', task: '起床（無理に早起きしない）', type: '準備' },
+      { time: '9:00〜11:00', task: '軽いタスク・メール・ルーティン作業', type: 'ルーティン' },
+      { time: '11:00〜14:00', task: '会議・コラボレーション（エンジン暖機）', type: '協働' },
+      { time: '14:00〜17:00', task: '分析・レポート・段階的集中', type: '分析' },
+      { time: '17:00〜19:00', task: '夕食・休憩・リフレッシュ', type: '休憩' },
+      { time: '19:00〜22:00', task: '最重要タスク・創造的作業', type: '集中' },
+      { time: '22:00〜1:00', task: '深い集中・ブレインストーミング・執筆', type: '創造' },
+      { time: '1:00〜2:00', task: '就寝準備', type: '休息' }
+    ]
+  }
+};
+
+let answers = [];
+let currentQ = 0;
+
+function renderQuestion() {
+  const q = questions[currentQ];
+  const area = document.getElementById('questionArea');
+  const saved = answers[currentQ];
+
+  let optionsHtml = q.options.map((opt, i) => {
+    const checked = saved === i ? 'checked' : '';
+    return `<label class="flex items-center gap-3 p-3 rounded-lg border cursor-pointer hover:bg-indigo-50 transition ${saved === i ? 'border-indigo-400 bg-indigo-50' : 'border-gray-200'}">
+      <input type="radio" name="q${currentQ}" value="${i}" ${checked} class="accent-indigo-500">
+      <span class="text-sm text-gray-700">${escapeHtml(opt)}</span>
+    </label>`;
+  }).join('');
+
+  area.innerHTML = `<p class="text-gray-800 font-medium mb-4">Q${currentQ + 1}. ${escapeHtml(q.text)}</p><div class="space-y-2">${optionsHtml}</div>`; // xss-ok: currentQ is number; optionsHtml built with escapeHtml(opt)
+
+  document.getElementById('questionProgress').textContent = (currentQ + 1) + ' / ' + questions.length;
+  document.getElementById('prevBtn').classList.toggle('hidden', currentQ === 0);
+  document.getElementById('nextBtn').textContent = currentQ === questions.length - 1 ? '診断する ✓' : '次へ →';
+
+  for (let i = 0; i < questions.length; i++) {
+    const dot = document.getElementById('dot' + i);
+    if (dot) dot.className = 'w-2 h-2 rounded-full ' + (i === currentQ ? 'bg-indigo-500' : (answers[i] !== undefined ? 'bg-indigo-300' : 'bg-gray-300'));
+  }
+}
+
+document.getElementById('nextBtn').addEventListener('click', function() {
+  const sel = document.querySelector(`input[name="q${currentQ}"]:checked`);
+  if (!sel) { alert('選択肢を選んでください'); return; }
+  answers[currentQ] = parseInt(sel.value);
+
+  if (currentQ < questions.length - 1) {
+    currentQ++;
+    renderQuestion();
+  } else {
+    showResult();
+  }
+});
+
+document.getElementById('prevBtn').addEventListener('click', function() {
+  if (currentQ > 0) { currentQ--; renderQuestion(); }
+});
+
+function showResult() {
+  const totalScore = answers.reduce((sum, ai, qi) => sum + questions[qi].scores[ai], 0);
+  let typeKey = totalScore >= 19 ? 'morning' : (totalScore >= 12 ? 'neutral' : 'evening');
+  const type = TYPES[typeKey];
+  const sched = SCHEDULES[typeKey];
+
+  localStorage.setItem(KEY, JSON.stringify({ answers, totalScore, typeKey }));
+
+  document.getElementById('quizSection').classList.add('hidden');
+  const res = document.getElementById('resultSection');
+  res.classList.remove('hidden');
+
+  const typeColors = { 集中: 'bg-red-100 text-red-700', 創造: 'bg-yellow-100 text-yellow-700', 分析: 'bg-blue-100 text-blue-700', ルーティン: 'bg-gray-100 text-gray-700', 協働: 'bg-green-100 text-green-700', 準備: 'bg-indigo-100 text-indigo-700', ウォームアップ: 'bg-orange-100 text-orange-700', インプット: 'bg-purple-100 text-purple-700', 休憩: 'bg-gray-100 text-gray-500', 休息: 'bg-gray-100 text-gray-500' };
+
+  const templateRows = sched.template.map(item => {
+    const badgeCls = typeColors[item.type] || 'bg-gray-100 text-gray-700';
+    return `<div class="flex items-center gap-3 py-2 border-b border-gray-100 last:border-0">
+      <span class="text-xs font-mono text-gray-500 w-28 shrink-0">${escapeHtml(item.time)}</span>
+      <span class="text-sm text-gray-700 flex-1">${escapeHtml(item.task)}</span>
+      <span class="text-xs px-2 py-0.5 rounded-full ${escapeHtml(badgeCls)} shrink-0">${escapeHtml(item.type)}</span>
+    </div>`;
+  }).join('');
+
+  res.innerHTML = ` // xss-ok: templateRows built with escapeHtml on developer-controlled constants; type fields all escaped
+    <div class="bg-white rounded-xl shadow p-6 border-l-4 ${escapeHtml(type.color.split(' ')[0])} ${escapeHtml(type.color.split(' ').slice(1).join(' '))} mb-4">
+      <div class="flex items-center gap-3 mb-4">
+        <span class="text-4xl">${escapeHtml(type.emoji)}</span>
+        <div>
+          <div class="text-lg font-bold ${escapeHtml(type.textColor)}">${escapeHtml(type.label)} クロノタイプ</div>
+          <div class="text-sm text-gray-500">MEQスコア: ${escapeHtml(String(totalScore))}点 (${escapeHtml(type.range)})</div>
+        </div>
+      </div>
+      <div class="grid grid-cols-3 gap-3 mb-5">
+        <div class="bg-gray-50 rounded-lg p-3 text-center">
+          <div class="text-xs text-gray-500 mb-1">集中力ピーク</div>
+          <div class="text-sm font-bold text-gray-800">${escapeHtml(sched.peaks.focus)}</div>
+        </div>
+        <div class="bg-gray-50 rounded-lg p-3 text-center">
+          <div class="text-xs text-gray-500 mb-1">創造性ピーク</div>
+          <div class="text-sm font-bold text-gray-800">${escapeHtml(sched.peaks.creative)}</div>
+        </div>
+        <div class="bg-gray-50 rounded-lg p-3 text-center">
+          <div class="text-xs text-gray-500 mb-1">分析力ピーク</div>
+          <div class="text-sm font-bold text-gray-800">${escapeHtml(sched.peaks.analysis)}</div>
+        </div>
+      </div>
+      <h3 class="font-semibold text-gray-700 mb-3">最適タスク配置テンプレート</h3>
+      <div>${templateRows}</div>
+    </div>
+    <button id="retryBtn" aria-label="もう一度診断する" class="w-full py-2 bg-indigo-100 text-indigo-700 rounded-lg text-sm font-semibold hover:bg-indigo-200 transition">もう一度診断する</button>`;
+
+  document.getElementById('retryBtn').addEventListener('click', function() {
+    answers = []; currentQ = 0;
+    document.getElementById('resultSection').classList.add('hidden');
+    document.getElementById('quizSection').classList.remove('hidden');
+    renderQuestion();
+  });
+}
+
+const saved = localStorage.getItem(KEY);
+if (saved) {
+  try {
+    const d = JSON.parse(saved);
+    if (d.answers && d.answers.length === questions.length) {
+      answers = d.answers;
+    }
+  } catch(e) {}
+}
+renderQuestion();
+</script>
+</body>
+</html>
